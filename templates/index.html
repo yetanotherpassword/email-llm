@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email-LLM Search</title>
+    <style>
+        :root {
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --bg-tertiary: #0f3460;
+            --text-primary: #eaeaea;
+            --text-secondary: #a0a0a0;
+            --accent: #e94560;
+            --accent-hover: #ff6b6b;
+            --success: #4ecca3;
+            --border: #2a2a4a;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+        }
+
+        .search-container {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            border: 1px solid var(--border);
+        }
+
+        .search-box {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .search-input {
+            flex: 1;
+            padding: 1rem 1.5rem;
+            font-size: 1.1rem;
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            transition: border-color 0.2s;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .search-btn {
+            padding: 1rem 2rem;
+            font-size: 1.1rem;
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .search-btn:hover {
+            background: var(--accent-hover);
+        }
+
+        .search-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .filters-toggle {
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .filters-toggle:hover {
+            color: var(--text-primary);
+        }
+
+        .filters {
+            display: none;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border);
+        }
+
+        .filters.show {
+            display: grid;
+        }
+
+        .filter-group label {
+            display: block;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.25rem;
+        }
+
+        .filter-group input,
+        .filter-group select {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+        }
+
+        .answer-container {
+            background: var(--bg-tertiary);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            border: 1px solid var(--success);
+            display: none;
+        }
+
+        .answer-container.show {
+            display: block;
+        }
+
+        .answer-label {
+            font-size: 0.875rem;
+            color: var(--success);
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .answer-content {
+            font-size: 1.1rem;
+            white-space: pre-wrap;
+        }
+
+        .results-container {
+            display: none;
+        }
+
+        .results-container.show {
+            display: block;
+        }
+
+        .results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .results-count {
+            color: var(--text-secondary);
+        }
+
+        .result-card {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 1rem 1.5rem;
+            margin-bottom: 1rem;
+            border: 1px solid var(--border);
+            transition: border-color 0.2s;
+        }
+
+        .result-card:hover {
+            border-color: var(--accent);
+        }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 0.5rem;
+        }
+
+        .result-subject {
+            font-weight: 600;
+            font-size: 1.1rem;
+        }
+
+        .result-score {
+            background: var(--accent);
+            color: white;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+        }
+
+        .result-meta {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            margin-bottom: 0.5rem;
+        }
+
+        .result-preview {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            border-top: 1px solid var(--border);
+            padding-top: 0.5rem;
+            max-height: 100px;
+            overflow: hidden;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 2rem;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: var(--text-secondary);
+        }
+
+        .stats {
+            display: flex;
+            gap: 2rem;
+            justify-content: center;
+            margin-top: 2rem;
+            padding-top: 2rem;
+            border-top: 1px solid var(--border);
+        }
+
+        .stat {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--accent);
+        }
+
+        .stat-label {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            width: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Email-LLM</h1>
+            <p class="subtitle">Natural language search for your Thunderbird emails</p>
+        </header>
+
+        <div class="search-container">
+            <div class="search-box">
+                <input
+                    type="text"
+                    class="search-input"
+                    id="searchInput"
+                    placeholder="Ask about your emails... e.g., 'Find invoices from last month' or 'What did John say about the project?'"
+                    autofocus
+                >
+                <button class="search-btn" id="searchBtn">Search</button>
+            </div>
+
+            <div class="filters-toggle" onclick="toggleFilters()">
+                <span>&#9662;</span> Advanced Filters
+            </div>
+
+            <div class="filters" id="filters">
+                <div class="filter-group">
+                    <label>From Address</label>
+                    <input type="text" id="filterFrom" placeholder="e.g., john@example.com">
+                </div>
+                <div class="filter-group">
+                    <label>From Date</label>
+                    <input type="date" id="filterFromDate">
+                </div>
+                <div class="filter-group">
+                    <label>To Date</label>
+                    <input type="date" id="filterToDate">
+                </div>
+                <div class="filter-group">
+                    <label>Folder</label>
+                    <input type="text" id="filterFolder" placeholder="e.g., Inbox">
+                </div>
+                <div class="filter-group">
+                    <label>Attachment Type</label>
+                    <select id="filterAttachment">
+                        <option value="">Any</option>
+                        <option value="image">Images</option>
+                        <option value="pdf">PDFs</option>
+                        <option value="word">Word Documents</option>
+                        <option value="excel">Excel Files</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label>Contains Object (YOLO)</label>
+                    <select id="filterObject">
+                        <option value="">Any</option>
+                        {% for obj in object_classes %}
+                        <option value="{{ obj }}">{{ obj }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="filterHasAttachments">
+                        <label for="filterHasAttachments">Has Attachments</label>
+                    </div>
+                </div>
+                <div class="filter-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="filterHasFaces">
+                        <label for="filterHasFaces">Images with People</label>
+                    </div>
+                </div>
+                <div class="filter-group">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="filterUseLLM" checked>
+                        <label for="filterUseLLM">Generate AI Answer</label>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Searching your emails...</p>
+        </div>
+
+        <div class="answer-container" id="answerContainer">
+            <div class="answer-label">AI Answer</div>
+            <div class="answer-content" id="answerContent"></div>
+        </div>
+
+        <div class="results-container" id="resultsContainer">
+            <div class="results-header">
+                <h2>Search Results</h2>
+                <span class="results-count" id="resultsCount"></span>
+            </div>
+            <div id="resultsList"></div>
+        </div>
+
+        <div class="empty-state" id="emptyState">
+            <p>Enter a search query to find emails</p>
+        </div>
+
+        <div class="stats" id="stats">
+            <div class="stat">
+                <div class="stat-value" id="statChunks">-</div>
+                <div class="stat-label">Indexed Chunks</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" id="statStatus">-</div>
+                <div class="stat-label">LLM Status</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const searchInput = document.getElementById('searchInput');
+        const searchBtn = document.getElementById('searchBtn');
+        const loading = document.getElementById('loading');
+        const answerContainer = document.getElementById('answerContainer');
+        const answerContent = document.getElementById('answerContent');
+        const resultsContainer = document.getElementById('resultsContainer');
+        const resultsList = document.getElementById('resultsList');
+        const resultsCount = document.getElementById('resultsCount');
+        const emptyState = document.getElementById('emptyState');
+
+        // Load stats on page load
+        async function loadStats() {
+            try {
+                const healthResp = await fetch('/api/health');
+                const health = await healthResp.json();
+
+                document.getElementById('statChunks').textContent = health.index_chunks.toLocaleString();
+                document.getElementById('statStatus').textContent = health.llm_connected ? 'Connected' : 'Offline';
+            } catch (e) {
+                console.error('Failed to load stats:', e);
+            }
+        }
+        loadStats();
+
+        function toggleFilters() {
+            document.getElementById('filters').classList.toggle('show');
+        }
+
+        async function search() {
+            const query = searchInput.value.trim();
+            if (!query) return;
+
+            // Show loading
+            loading.classList.add('show');
+            answerContainer.classList.remove('show');
+            resultsContainer.classList.remove('show');
+            emptyState.style.display = 'none';
+            searchBtn.disabled = true;
+
+            try {
+                const body = {
+                    query: query,
+                    limit: 20,
+                    use_llm: document.getElementById('filterUseLLM').checked,
+                };
+
+                // Add filters
+                const fromAddress = document.getElementById('filterFrom').value;
+                if (fromAddress) body.from_address = fromAddress;
+
+                const fromDate = document.getElementById('filterFromDate').value;
+                if (fromDate) body.from_date = fromDate;
+
+                const toDate = document.getElementById('filterToDate').value;
+                if (toDate) body.to_date = toDate;
+
+                const folder = document.getElementById('filterFolder').value;
+                if (folder) body.folder = folder;
+
+                const attachment = document.getElementById('filterAttachment').value;
+                if (attachment) body.attachment_type = attachment;
+
+                const containsObject = document.getElementById('filterObject').value;
+                if (containsObject) body.contains_object = containsObject;
+
+                if (document.getElementById('filterHasAttachments').checked) {
+                    body.has_attachments = true;
+                }
+
+                if (document.getElementById('filterHasFaces').checked) {
+                    body.has_faces = true;
+                }
+
+                const response = await fetch('/api/search', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+
+                const data = await response.json();
+
+                // Hide loading
+                loading.classList.remove('show');
+                searchBtn.disabled = false;
+
+                // Show answer if available
+                if (data.answer) {
+                    answerContent.textContent = data.answer;
+                    answerContainer.classList.add('show');
+                }
+
+                // Show results
+                if (data.results && data.results.length > 0) {
+                    resultsCount.textContent = `${data.total_found} results found`;
+                    resultsList.innerHTML = data.results.map((r, i) => `
+                        <div class="result-card">
+                            <div class="result-header">
+                                <div class="result-subject">${escapeHtml(r.subject || '(No Subject)')}</div>
+                                <div class="result-score">${(r.score * 100).toFixed(0)}%</div>
+                            </div>
+                            <div class="result-meta">
+                                <strong>From:</strong> ${escapeHtml(r.from_address || 'Unknown')}
+                                &bull; <strong>Date:</strong> ${r.date ? r.date.substring(0, 10) : 'Unknown'}
+                                ${r.folder ? `&bull; <strong>Folder:</strong> ${escapeHtml(r.folder)}` : ''}
+                            </div>
+                            <div class="result-preview">${escapeHtml(r.matched_text.substring(0, 300))}...</div>
+                        </div>
+                    `).join('');
+                    resultsContainer.classList.add('show');
+                } else {
+                    emptyState.innerHTML = '<p>No results found. Try a different query.</p>';
+                    emptyState.style.display = 'block';
+                }
+
+            } catch (error) {
+                console.error('Search error:', error);
+                loading.classList.remove('show');
+                searchBtn.disabled = false;
+                emptyState.innerHTML = `<p style="color: var(--accent);">Error: ${error.message}</p>`;
+                emptyState.style.display = 'block';
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Event listeners
+        searchBtn.addEventListener('click', search);
+        searchInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') search();
+        });
+    </script>
+</body>
+</html>
