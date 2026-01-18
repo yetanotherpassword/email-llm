@@ -60,12 +60,14 @@ class EmailIndexer:
         self,
         reindex: bool = False,
         max_emails: Optional[int] = None,
+        incremental: bool = True,
     ) -> dict:
         """Index all emails from Thunderbird.
 
         Args:
             reindex: If True, clear existing index first
             max_emails: Maximum emails to process (for testing)
+            incremental: If True (default), skip already indexed emails
 
         Returns:
             Dict with indexing statistics
@@ -73,9 +75,17 @@ class EmailIndexer:
         if reindex:
             logger.info("Clearing existing index...")
             self.vector_store.clear()
+            indexed_ids = set()
+        elif incremental:
+            logger.info("Loading list of already indexed emails...")
+            indexed_ids = self.vector_store.get_indexed_email_ids()
+            logger.info(f"Found {len(indexed_ids)} already indexed emails")
+        else:
+            indexed_ids = set()
 
         stats = {
             "emails_processed": 0,
+            "emails_skipped": 0,
             "emails_failed": 0,
             "attachments_processed": 0,
             "images_analyzed": 0,
@@ -85,9 +95,25 @@ class EmailIndexer:
         # Count emails first for progress bar
         logger.info("Scanning mailboxes...")
         emails = list(self.parser.parse_all())
+
+        # Filter out already indexed emails if incremental
+        if incremental and indexed_ids:
+            new_emails = [e for e in emails if e.message_id not in indexed_ids]
+            stats["emails_skipped"] = len(emails) - len(new_emails)
+            logger.info(
+                f"Found {len(emails)} total emails, "
+                f"{stats['emails_skipped']} already indexed, "
+                f"{len(new_emails)} new to process"
+            )
+            emails = new_emails
+
         total = len(emails) if max_emails is None else min(len(emails), max_emails)
 
-        logger.info(f"Found {len(emails)} emails, processing {total}...")
+        if total == 0:
+            logger.info("No new emails to index.")
+            return stats
+
+        logger.info(f"Processing {total} emails...")
 
         with Progress(
             SpinnerColumn(),
@@ -115,7 +141,8 @@ class EmailIndexer:
                 progress.update(task, advance=1)
 
         logger.info(
-            f"Indexing complete: {stats['emails_processed']} emails, "
+            f"Indexing complete: {stats['emails_processed']} new emails indexed, "
+            f"{stats['emails_skipped']} skipped (already indexed), "
             f"{stats['chunks_created']} chunks, "
             f"{stats['attachments_processed']} attachments"
         )

@@ -50,6 +50,12 @@ def index(
         "-r",
         help="Clear and rebuild the entire index",
     ),
+    full: bool = typer.Option(
+        False,
+        "--full",
+        "-f",
+        help="Re-process all emails (don't skip already indexed ones)",
+    ),
     max_emails: Optional[int] = typer.Option(
         None,
         "--max",
@@ -73,8 +79,21 @@ def index(
         help="Enable verbose logging",
     ),
 ):
-    """Index your Thunderbird emails for search."""
+    """Index your Thunderbird emails for search.
+
+    By default, only indexes NEW emails (incremental mode).
+    Use --reindex to clear and rebuild everything.
+    Use --full to re-process all emails without clearing.
+    """
     setup_logging(verbose)
+
+    # Determine mode
+    if reindex:
+        mode = "Full reindex (clearing existing)"
+    elif full:
+        mode = "Full scan (keeping existing)"
+    else:
+        mode = "Incremental (new emails only)"
 
     console.print(Panel.fit(
         "[bold blue]Email-LLM Indexer[/bold blue]\n"
@@ -85,6 +104,7 @@ def index(
     path = profile_path or settings.thunderbird_profile_path
 
     console.print(f"\n[dim]Profile path:[/dim] {path}")
+    console.print(f"[dim]Mode:[/dim] {mode}")
     console.print(f"[dim]Process images:[/dim] {process_images}")
     console.print(f"[dim]Use vision model:[/dim] {use_vision}")
 
@@ -101,21 +121,31 @@ def index(
         )
 
         console.print("\n[bold]Starting indexing...[/bold]\n")
-        stats = indexer.index_all(reindex=reindex, max_emails=max_emails)
+        # incremental=True by default, unless --full is specified
+        stats = indexer.index_all(
+            reindex=reindex,
+            max_emails=max_emails,
+            incremental=not full and not reindex,
+        )
 
         # Display results
         table = Table(title="Indexing Results")
         table.add_column("Metric", style="cyan")
         table.add_column("Value", style="green")
 
-        table.add_row("Emails Processed", str(stats["emails_processed"]))
+        table.add_row("New Emails Indexed", str(stats["emails_processed"]))
+        table.add_row("Emails Skipped (already indexed)", str(stats.get("emails_skipped", 0)))
         table.add_row("Emails Failed", str(stats["emails_failed"]))
         table.add_row("Attachments Processed", str(stats["attachments_processed"]))
         table.add_row("Images Analyzed", str(stats["images_analyzed"]))
         table.add_row("Search Chunks Created", str(stats["chunks_created"]))
 
         console.print(table)
-        console.print("\n[green]Indexing complete![/green]")
+
+        if stats["emails_processed"] == 0 and stats.get("emails_skipped", 0) > 0:
+            console.print("\n[green]No new emails to index. Everything is up to date![/green]")
+        else:
+            console.print("\n[green]Indexing complete![/green]")
 
     except FileNotFoundError as e:
         console.print(f"\n[red]Error:[/red] {e}")

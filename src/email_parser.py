@@ -189,10 +189,14 @@ def parse_email_message(
         body_text = body_html
         body_html = None
 
+    # Safely parse from address
+    from_addresses = parse_addresses(msg.get("From"))
+    from_address = from_addresses[0] if from_addresses else None
+
     return EmailMessage(
         message_id=message_id,
         subject=decode_mime_header(msg.get("Subject")),
-        from_address=parse_addresses(msg.get("From"))[0] if msg.get("From") else None,
+        from_address=from_address,
         to_addresses=parse_addresses(msg.get("To")),
         cc_addresses=parse_addresses(msg.get("Cc")),
         date=date,

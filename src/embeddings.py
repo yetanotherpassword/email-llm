@@ -229,3 +229,27 @@ class VectorStore:
     def count(self) -> int:
         """Get the number of documents in the collection."""
         return self.collection.count()
+
+    def is_email_indexed(self, email_id: str) -> bool:
+        """Check if an email has already been indexed."""
+        results = self.collection.get(
+            where={"email_id": email_id},
+            include=[],
+            limit=1,
+        )
+        return bool(results["ids"])
+
+    def get_indexed_email_ids(self) -> set[str]:
+        """Get all indexed email IDs."""
+        # Get all unique email_ids from the collection
+        results = self.collection.get(
+            include=["metadatas"],
+        )
+
+        email_ids = set()
+        if results["metadatas"]:
+            for metadata in results["metadatas"]:
+                if "email_id" in metadata:
+                    email_ids.add(metadata["email_id"])
+
+        return email_ids
