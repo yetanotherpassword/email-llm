@@ -28,6 +28,7 @@ class EmailIndexer:
         vector_store: Optional[VectorStore] = None,
         process_images: bool = True,
         use_vision_model: bool = False,
+        skip_pdfs: bool = False,
     ):
         """Initialize the indexer.
 
@@ -36,11 +37,13 @@ class EmailIndexer:
             vector_store: Vector store instance
             process_images: Whether to process images with YOLO
             use_vision_model: Whether to use vision model for deep image analysis
+            skip_pdfs: Whether to skip PDF processing (to avoid crashes)
         """
         self.profile_path = profile_path or settings.thunderbird_profile_path
         self.vector_store = vector_store or VectorStore()
         self.process_images = process_images
         self.use_vision_model = use_vision_model
+        self.skip_pdfs = skip_pdfs
 
         # Initialize components
         self.parser = ThunderbirdParser(self.profile_path)
@@ -175,8 +178,18 @@ class EmailIndexer:
                 return
 
             # Extract text from documents
-            if attachment.attachment_type in (
-                AttachmentType.PDF,
+            if attachment.attachment_type == AttachmentType.PDF:
+                # Skip PDFs if requested (they can cause crashes with corrupt files)
+                if self.skip_pdfs:
+                    logger.debug(f"Skipping PDF: {attachment.filename}")
+                    return
+                try:
+                    text = self.attachment_extractor.extract_text(data, attachment)
+                    if text:
+                        attachment.extracted_text = text
+                except Exception as e:
+                    logger.warning(f"Failed to extract text from {attachment.filename}: {e}")
+            elif attachment.attachment_type in (
                 AttachmentType.WORD,
                 AttachmentType.EXCEL,
                 AttachmentType.POWERPOINT,

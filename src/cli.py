@@ -67,6 +67,11 @@ def index(
         "--images/--no-images",
         help="Process images with YOLO detection",
     ),
+    skip_pdfs: bool = typer.Option(
+        False,
+        "--skip-pdfs",
+        help="Skip PDF processing (use if experiencing crashes)",
+    ),
     use_vision: bool = typer.Option(
         False,
         "--vision",
@@ -106,6 +111,7 @@ def index(
     console.print(f"\n[dim]Profile path:[/dim] {path}")
     console.print(f"[dim]Mode:[/dim] {mode}")
     console.print(f"[dim]Process images:[/dim] {process_images}")
+    console.print(f"[dim]Skip PDFs:[/dim] {skip_pdfs}")
     console.print(f"[dim]Use vision model:[/dim] {use_vision}")
 
     if reindex:
@@ -118,6 +124,7 @@ def index(
             profile_path=path,
             process_images=process_images,
             use_vision_model=use_vision,
+            skip_pdfs=skip_pdfs,
         )
 
         console.print("\n[bold]Starting indexing...[/bold]\n")
