@@ -70,21 +70,39 @@ class AttachmentExtractor:
         """Extract text from a PDF file."""
         text_parts = []
 
-        with fitz.open(stream=data, filetype="pdf") as doc:
-            for page_num, page in enumerate(doc):
-                # Extract text
-                page_text = page.get_text()
-                if page_text.strip():
-                    text_parts.append(f"[Page {page_num + 1}]\n{page_text}")
+        try:
+            doc = fitz.open(stream=data, filetype="pdf")
+        except Exception as e:
+            logger.warning(f"Failed to open PDF: {e}")
+            return ""
 
-                # Try OCR on images if text extraction yielded little
-                if len(page_text.strip()) < 50 and HAS_TESSERACT:
-                    # Render page to image for OCR
-                    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
-                    img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                    ocr_text = pytesseract.image_to_string(img)
-                    if ocr_text.strip():
-                        text_parts.append(f"[Page {page_num + 1} OCR]\n{ocr_text}")
+        try:
+            # Limit pages to prevent hangs on huge PDFs
+            max_pages = 100
+            for page_num in range(min(len(doc), max_pages)):
+                try:
+                    page = doc[page_num]
+                    # Extract text
+                    page_text = page.get_text()
+                    if page_text.strip():
+                        text_parts.append(f"[Page {page_num + 1}]\n{page_text}")
+
+                    # Try OCR on images if text extraction yielded little
+                    if len(page_text.strip()) < 50 and HAS_TESSERACT:
+                        try:
+                            # Render page to image for OCR
+                            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                            ocr_text = pytesseract.image_to_string(img)
+                            if ocr_text.strip():
+                                text_parts.append(f"[Page {page_num + 1} OCR]\n{ocr_text}")
+                        except Exception as e:
+                            logger.debug(f"OCR failed on page {page_num + 1}: {e}")
+                except Exception as e:
+                    logger.debug(f"Failed to process PDF page {page_num + 1}: {e}")
+                    continue
+        finally:
+            doc.close()
 
         return "\n\n".join(text_parts)
 

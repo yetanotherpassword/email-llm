@@ -168,52 +168,70 @@ class EmailIndexer:
 
     def _process_attachment(self, email: EmailMessage, attachment) -> None:
         """Process an attachment and update its extracted content."""
-        # Get raw attachment data
-        data = self.parser.get_attachment_data(email, attachment)
-        if not data:
-            return
+        try:
+            # Get raw attachment data
+            data = self.parser.get_attachment_data(email, attachment)
+            if not data:
+                return
 
-        # Extract text from documents
-        if attachment.attachment_type in (
-            AttachmentType.PDF,
-            AttachmentType.WORD,
-            AttachmentType.EXCEL,
-            AttachmentType.POWERPOINT,
-            AttachmentType.TEXT,
-        ):
-            text = self.attachment_extractor.extract_text(data, attachment)
-            if text:
-                attachment.extracted_text = text
+            # Extract text from documents
+            if attachment.attachment_type in (
+                AttachmentType.PDF,
+                AttachmentType.WORD,
+                AttachmentType.EXCEL,
+                AttachmentType.POWERPOINT,
+                AttachmentType.TEXT,
+            ):
+                try:
+                    text = self.attachment_extractor.extract_text(data, attachment)
+                    if text:
+                        attachment.extracted_text = text
+                except Exception as e:
+                    logger.warning(f"Failed to extract text from {attachment.filename}: {e}")
 
-        # Process images
-        elif attachment.attachment_type == AttachmentType.IMAGE and self.process_images:
-            img = self.attachment_extractor.extract_image_for_analysis(data, attachment)
-            if img:
-                # Run YOLO analysis
-                if self.yolo:
-                    cache_key = f"{email.message_id}_{attachment.filename}"
-                    analysis = self.yolo.analyze_image(img, cache_key=cache_key)
+            # Process images
+            elif attachment.attachment_type == AttachmentType.IMAGE and self.process_images:
+                try:
+                    img = self.attachment_extractor.extract_image_for_analysis(data, attachment)
+                    if img:
+                        # Run YOLO analysis
+                        if self.yolo:
+                            try:
+                                cache_key = f"{email.message_id}_{attachment.filename}"
+                                analysis = self.yolo.analyze_image(img, cache_key=cache_key)
 
-                    # Add YOLO detection summary as searchable text
-                    yolo_summary = self.yolo.get_detection_summary(analysis)
-                    attachment.image_analysis = analysis
+                                # Add YOLO detection summary as searchable text
+                                yolo_summary = self.yolo.get_detection_summary(analysis)
+                                attachment.image_analysis = analysis
+                            except Exception as e:
+                                logger.warning(f"YOLO analysis failed for {attachment.filename}: {e}")
 
-                    # Run OCR
-                    ocr_text = self.attachment_extractor.ocr_image(img)
-                    if ocr_text:
-                        attachment.image_analysis.ocr_text = ocr_text
+                            # Run OCR (separate try block so it runs even if YOLO fails)
+                            try:
+                                ocr_text = self.attachment_extractor.ocr_image(img)
+                                if ocr_text and attachment.image_analysis:
+                                    attachment.image_analysis.ocr_text = ocr_text
+                            except Exception as e:
+                                logger.debug(f"OCR failed for {attachment.filename}: {e}")
 
-                    # Deep vision analysis if enabled
-                    if self.vision and self.use_vision_model:
-                        try:
-                            description = asyncio.get_event_loop().run_until_complete(
-                                self.vision.describe_image(
-                                    img, context=f"Email subject: {email.subject}"
-                                )
-                            )
-                            attachment.image_analysis.vision_description = description
-                        except Exception as e:
-                            logger.warning(f"Vision analysis failed: {e}")
+                            # Deep vision analysis if enabled
+                            if self.vision and self.use_vision_model and attachment.image_analysis:
+                                try:
+                                    description = asyncio.get_event_loop().run_until_complete(
+                                        self.vision.describe_image(
+                                            img, context=f"Email subject: {email.subject}"
+                                        )
+                                    )
+                                    attachment.image_analysis.vision_description = description
+                                except Exception as e:
+                                    logger.warning(f"Vision analysis failed: {e}")
+
+                        # Close image to free memory
+                        img.close()
+                except Exception as e:
+                    logger.warning(f"Failed to process image {attachment.filename}: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to process attachment {attachment.filename}: {e}")
 
     def index_single_mailbox(self, mailbox_path: Path) -> dict:
         """Index a single mailbox file.
