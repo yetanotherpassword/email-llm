@@ -14,9 +14,10 @@ from rich.table import Table
 
 from .config import settings
 from .embeddings import VectorStore
-from .indexer import EmailIndexer
+from .indexer import EmailIndexer, get_last_crash_info, clear_progress
 from .llm_client import LLMClient
 from .rag_engine import RAGEngine
+from .skip_log import SkipLog
 from .yolo_analyzer import get_available_object_classes
 
 app = typer.Typer(
@@ -319,6 +320,116 @@ def objects():
 
     console.print(table)
     console.print(f"\n[dim]Total: {len(classes)} object classes[/dim]")
+
+
+@app.command()
+def skipped(
+    reason: Optional[str] = typer.Option(
+        None,
+        "--reason",
+        "-r",
+        help="Filter by reason (e.g., 'PDF', 'image')",
+    ),
+    clear: bool = typer.Option(
+        False,
+        "--clear",
+        help="Clear the skip log",
+    ),
+    show_errors: bool = typer.Option(
+        False,
+        "--errors",
+        "-e",
+        help="Show error messages",
+    ),
+):
+    """View files that were skipped or failed during indexing."""
+    skip_log = SkipLog()
+
+    if clear:
+        if typer.confirm("Clear all skipped file records?"):
+            skip_log.clear()
+            console.print("[green]Skip log cleared.[/green]")
+        return
+
+    items = skip_log.get_by_reason(reason) if reason else skip_log.get_all()
+
+    if not items:
+        console.print("[green]No skipped files recorded.[/green]")
+        return
+
+    # Show summary first
+    summary = skip_log.summary()
+    console.print(Panel.fit(
+        "[bold]Skip Log Summary[/bold]\n" +
+        "\n".join(f"  {reason}: {count}" for reason, count in summary.items()),
+        border_style="blue",
+    ))
+    console.print()
+
+    # Show details table
+    table = Table(title=f"Skipped Files ({len(items)} total)")
+    table.add_column("#", style="dim", width=4)
+    table.add_column("Date", style="cyan", width=12)
+    table.add_column("From", style="green", width=25)
+    table.add_column("Subject", style="white", width=30)
+    table.add_column("Attachment", style="yellow", width=20)
+    table.add_column("Reason", style="red", width=25)
+    if show_errors:
+        table.add_column("Error", style="dim", width=40)
+
+    for i, item in enumerate(items, 1):
+        row = [
+            str(i),
+            item.date[:10] if len(item.date) >= 10 else item.date,
+            item.from_address[:25] if item.from_address else "-",
+            item.subject[:30] if item.subject else "-",
+            item.attachment_filename[:20] if item.attachment_filename else "-",
+            item.reason[:25],
+        ]
+        if show_errors:
+            row.append(item.error_message[:40] if item.error_message else "-")
+        table.add_row(*row)
+
+    console.print(table)
+    console.print(f"\n[dim]Log file: {settings.get_skip_log_path()}[/dim]")
+
+
+@app.command()
+def crashinfo(
+    clear: bool = typer.Option(
+        False,
+        "--clear",
+        help="Clear the crash info file",
+    ),
+):
+    """View information about the last crash during indexing."""
+    if clear:
+        clear_progress()
+        console.print("[green]Crash info cleared.[/green]")
+        return
+
+    info = get_last_crash_info()
+    if not info:
+        console.print("[green]No crash information found. Last indexing completed successfully.[/green]")
+        return
+
+    console.print(Panel.fit(
+        "[bold red]Crash Information[/bold red]\n\n"
+        f"[bold]Email #:[/bold] {info['index']+1} of {info['total']}\n"
+        f"[bold]From:[/bold] {info['from_address']}\n"
+        f"[bold]Date:[/bold] {info['date']}\n"
+        f"[bold]Subject:[/bold] {info['subject']}\n"
+        f"[bold]Attachment:[/bold] {info.get('current_attachment', 'N/A')}\n"
+        f"[bold]Email ID:[/bold] {info['email_id'][:50]}...",
+        border_style="red",
+    ))
+
+    console.print(
+        "\n[yellow]Hint:[/yellow] The crash was likely caused by this attachment. "
+        "Try running with [bold]--skip-pdfs[/bold] if it's a PDF, "
+        "or [bold]--no-images[/bold] if it's an image."
+    )
+    console.print(f"\n[dim]Progress file: {settings.get_progress_log_path()}[/dim]")
 
 
 @app.command()

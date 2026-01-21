@@ -125,6 +125,14 @@ class Settings(BaseSettings):
         """Get path to YOLO results cache."""
         return self.data_dir / "yolo_cache"
 
+    def get_skip_log_path(self) -> Path:
+        """Get path to skip/failure log file."""
+        return self.data_dir / "skipped_files.json"
+
+    def get_progress_log_path(self) -> Path:
+        """Get path to progress checkpoint file (for crash recovery)."""
+        return self.data_dir / "indexing_progress.json"
+
 
 # Global settings instance
 settings = Settings()

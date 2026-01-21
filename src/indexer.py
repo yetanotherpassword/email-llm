@@ -1,6 +1,7 @@
 """Email indexing pipeline - coordinates parsing, extraction, and embedding."""
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 from typing import Optional
@@ -13,10 +14,49 @@ from .config import settings
 from .email_parser import ThunderbirdParser
 from .embeddings import VectorStore
 from .models import AttachmentType, EmailMessage
+from .skip_log import SkipLog
 from .vision_model import VisionModel
 from .yolo_analyzer import YoloAnalyzer
 
 logger = logging.getLogger(__name__)
+
+
+def save_progress(email: EmailMessage, index: int, total: int, attachment: Optional[str] = None):
+    """Save current processing state for crash recovery."""
+    progress_file = settings.get_progress_log_path()
+    progress_file.parent.mkdir(parents=True, exist_ok=True)
+
+    data = {
+        "index": index,
+        "total": total,
+        "email_id": email.message_id,
+        "subject": email.subject or "(no subject)",
+        "from_address": email.from_address or "(unknown)",
+        "date": email.date.isoformat() if email.date else "(unknown)",
+        "current_attachment": attachment,
+    }
+
+    with open(progress_file, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def get_last_crash_info() -> Optional[dict]:
+    """Get info about the last email being processed when a crash occurred."""
+    progress_file = settings.get_progress_log_path()
+    if progress_file.exists():
+        try:
+            with open(progress_file, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return None
+
+
+def clear_progress():
+    """Clear the progress file after successful completion."""
+    progress_file = settings.get_progress_log_path()
+    if progress_file.exists():
+        progress_file.unlink()
 
 
 class EmailIndexer:
@@ -48,6 +88,7 @@ class EmailIndexer:
         # Initialize components
         self.parser = ThunderbirdParser(self.profile_path)
         self.attachment_extractor = AttachmentExtractor()
+        self.skip_log = SkipLog()
 
         if process_images:
             self.yolo = YoloAnalyzer()
@@ -118,6 +159,15 @@ class EmailIndexer:
 
         logger.info(f"Processing {total} emails...")
 
+        # Check for previous crash
+        crash_info = get_last_crash_info()
+        if crash_info:
+            logger.warning(
+                f"Previous indexing crashed while processing email #{crash_info['index']+1}/{crash_info['total']}: "
+                f"From: {crash_info['from_address']}, Subject: {crash_info['subject'][:50]}, "
+                f"Attachment: {crash_info.get('current_attachment', 'N/A')}"
+            )
+
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -127,8 +177,11 @@ class EmailIndexer:
             task = progress.add_task("Indexing emails...", total=total)
 
             for i, email in enumerate(emails[:total]):
+                # Save progress before processing (for crash recovery)
+                save_progress(email, i, total)
+
                 try:
-                    chunks = self._process_email(email)
+                    chunks = self._process_email(email, i, total)
                     stats["emails_processed"] += 1
                     stats["chunks_created"] += chunks
                     stats["attachments_processed"] += len(email.attachments)
@@ -143,6 +196,9 @@ class EmailIndexer:
 
                 progress.update(task, advance=1)
 
+        # Clear progress file on successful completion
+        clear_progress()
+
         logger.info(
             f"Indexing complete: {stats['emails_processed']} new emails indexed, "
             f"{stats['emails_skipped']} skipped (already indexed), "
@@ -152,17 +208,21 @@ class EmailIndexer:
 
         return stats
 
-    def _process_email(self, email: EmailMessage) -> int:
+    def _process_email(self, email: EmailMessage, index: int = 0, total: int = 0) -> int:
         """Process a single email and add to vector store.
 
         Args:
             email: EmailMessage to process
+            index: Current email index (for progress tracking)
+            total: Total emails to process (for progress tracking)
 
         Returns:
             Number of chunks created
         """
         # Process attachments
         for attachment in email.attachments:
+            # Update progress with current attachment
+            save_progress(email, index, total, attachment.filename)
             self._process_attachment(email, attachment)
 
         # Add to vector store
@@ -181,14 +241,29 @@ class EmailIndexer:
             if attachment.attachment_type == AttachmentType.PDF:
                 # Skip PDFs if requested (they can cause crashes with corrupt files)
                 if self.skip_pdfs:
-                    logger.debug(f"Skipping PDF: {attachment.filename}")
+                    self.skip_log.add(
+                        email_id=email.message_id,
+                        subject=email.subject,
+                        from_address=email.from_address,
+                        date=email.date,
+                        attachment_filename=attachment.filename,
+                        reason="PDF skipped (--skip-pdfs flag)",
+                    )
                     return
                 try:
                     text = self.attachment_extractor.extract_text(data, attachment)
                     if text:
                         attachment.extracted_text = text
                 except Exception as e:
-                    logger.warning(f"Failed to extract text from {attachment.filename}: {e}")
+                    self.skip_log.add(
+                        email_id=email.message_id,
+                        subject=email.subject,
+                        from_address=email.from_address,
+                        date=email.date,
+                        attachment_filename=attachment.filename,
+                        reason="PDF extraction failed",
+                        error_message=str(e),
+                    )
             elif attachment.attachment_type in (
                 AttachmentType.WORD,
                 AttachmentType.EXCEL,
@@ -200,7 +275,15 @@ class EmailIndexer:
                     if text:
                         attachment.extracted_text = text
                 except Exception as e:
-                    logger.warning(f"Failed to extract text from {attachment.filename}: {e}")
+                    self.skip_log.add(
+                        email_id=email.message_id,
+                        subject=email.subject,
+                        from_address=email.from_address,
+                        date=email.date,
+                        attachment_filename=attachment.filename,
+                        reason=f"{attachment.attachment_type.value} extraction failed",
+                        error_message=str(e),
+                    )
 
             # Process images
             elif attachment.attachment_type == AttachmentType.IMAGE and self.process_images:
@@ -242,9 +325,25 @@ class EmailIndexer:
                         # Close image to free memory
                         img.close()
                 except Exception as e:
-                    logger.warning(f"Failed to process image {attachment.filename}: {e}")
+                    self.skip_log.add(
+                        email_id=email.message_id,
+                        subject=email.subject,
+                        from_address=email.from_address,
+                        date=email.date,
+                        attachment_filename=attachment.filename,
+                        reason="Image processing failed",
+                        error_message=str(e),
+                    )
         except Exception as e:
-            logger.warning(f"Failed to process attachment {attachment.filename}: {e}")
+            self.skip_log.add(
+                email_id=email.message_id,
+                subject=email.subject,
+                from_address=email.from_address,
+                date=email.date,
+                attachment_filename=attachment.filename,
+                reason="Attachment processing failed",
+                error_message=str(e),
+            )
 
     def index_single_mailbox(self, mailbox_path: Path) -> dict:
         """Index a single mailbox file.
